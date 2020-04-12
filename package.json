@@ -1,16 +1,23 @@
 {
   "name": "@sneppy/vue-swoosh",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": false,
   "description": "A simple carousel for Vue",
-  "keywords": ["vue", "swoosh", "carousel", "slider", "cards", "swipe"],
+  "keywords": [
+    "vue",
+    "swoosh",
+    "carousel",
+    "slider",
+    "cards",
+    "swipe"
+  ],
   "homepage": "https://github.com/sneppy/vue-swoosh#readme",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/sneppy/vue-swoosh.git"
   },
-  "main": "./dist/vue-swoosh.umd.js",
-  "module": "./dist/vue-swoosh.common.js",
+  "main": "./dist/vue-swoosh.umd.min.js",
+  "module": "./src/index.js",
   "bugs": {
     "url": "https://github.com/Sneppy/vue-swoosh/issues"
   },

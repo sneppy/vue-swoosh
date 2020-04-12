@@ -1,27 +1,22 @@
 import Card from './Card'
 
 /**
- * 
+ * Get correct axis
  */
-const getTouchLocation = ({screenX, screenY}) => [screenX, screenY]
+const getAxis = (axis, def = {x: 1, y: 0}) => {
+			
+	switch (axis)
+	{
+		case 'x':
+		case 'x+': return {x: +1, y: +0}
+		case 'x-': return {x: -1, y: +0}
+		case 'y':
+		case 'y+': return {x: +0, y: +1}
+		case 'y-': return {x: +0, y: -1}
 
-/**
- * 
- */
-const dot = (a, b) =>  a.x * b.x + a.y * b.y
-
-/**
- * 
- */
-const getSize = (v) => Math.sqrt(dot(v, v))
-
-/**
- * 
- */
-const getNormal = (v) => {
-
-	const size = getSize(v)
-	return {x: v.x / size, y: v.y / size}
+		// Return object or default
+		default: return axis || def
+	}
 }
 
 /**
@@ -29,6 +24,14 @@ const getNormal = (v) => {
  */
 export default {
 	name: 'swoosh-view',
+
+	props: {
+		/// Swoosh options object
+		options: {
+			type: Object,
+			required: false
+		}
+	},
 
 	data() {
 
@@ -42,217 +45,298 @@ export default {
 			/// Slider offset
 			offset: 0,
 
-			/// Slider transform string
-			sliderTransform: '',
-
 			/// Content width
-			contentWidth: [],
-
-			/// Scroll on card change flag
-			scrollOnChange: false
+			contentSize: []
 		}
 	},
 
-	computed: {
+	computed: {		
 		/**
 		 * Return the target offset in pixels
 		 */
 		targetOffset() {
 			
-			return this.contentWidth.slice(0, this.index).reduce((offset, w) => offset - w, 0)
+			return this.contentSize.slice(0, this.index).reduce((offset, {x: w, y: h}) => {
+
+				return offset - (w * this.swipeAxis.x + h * this.swipeAxis.y)
+			}, 0)
+		},
+
+		/**
+		 * Return transform
+		 */
+		transform() {
+
+			return {
+				x: this.moveAxis.x * this.offset,
+				y: this.moveAxis.y * this.offset
+			}
+		},
+
+		/**
+		 * 
+		 */
+		swipeAxis() {
+
+			let axis = this.options && this.options.swipeAxis
+			return getAxis(axis, {x: -1, y: 0})
+		},
+
+		/**
+		 * 
+		 */
+		moveAxis() {
+
+			let axis = this.options && this.options.moveAxis
+			return getAxis(axis, this.swipeAxis)
+		},
+
+		/**
+		 * Swipe sensitivity
+		 */
+		sensitivity() {
+
+			let sensitivity = this.options && this.options.sensitivity
+			return sensitivity ? 1 / sensitivity : 1
 		}
 	},
 
 	methods: {
 		/**
-		 * 
+		 * Called when sweep action starts.
+		 * Sets initial position and state.
 		 */
-		getTouch(touches) {
+		set(pos) {
 
-			let touch = null
-			for (let i = 0; !touch; ++i)
+			// Stop active animation
+			if (this.snapAnim)
 			{
-				const id = touches[i].identifier
-
-				if (id === this.touchStartLoc.id)
-				{
-					const [x, y] = getTouchLocation(touches[i])
-					touch = {x, y, id}
-					break
-				}
+				cancelAnimationFrame(this.snapAnim)
+				this.snapAnim = null
 			}
 
-			return touch
+			// Register initial state
+			this.currPos =
+			this.prevPos =
+			this.startPos = pos
+			this.velocity = {x: 0, y: 0}
+			this.speed = 0
+			this.lockAxis = false
 		},
 
 		/**
-		 * 
+		 * Called upon move event
 		 */
-		toggleBodyScroll(lock = true) {
+		update(pos) {
 
-			// Lock or unlock window scrolling
-			const body = document.getElementsByTagName('body')[0]
-			body.style.overflow = lock ? 'hidden' : 'auto'
+			// Update position
+			this.prevPos = this.currPos
+			this.currPos = pos
+
+			// Compute delta movement
+			let dx = this.currPos.x - this.prevPos.x
+			let dy = this.currPos.y - this.prevPos.y
+
+			// Check lock on axis
+			if (!this.lockAxis)
+			{
+				const size = Math.sqrt(dx * dx + dy * dy)
+				const dot = (dx * this.swipeAxis.x + dy * this.swipeAxis.y) / size
+				const threshold = 0.9
+
+				this.lockAxis = dot > threshold || -dot > threshold
+			}
+
+			if (this.lockAxis)
+			{
+				// Update velocity
+				let currTickTime = performance.now()
+				let dt = (currTickTime - this.lastTickTime) / 1000.0 // Get in seconds
+				this.lastTickTime = currTickTime
+
+				this.velocity.x = dx / dt
+				this.velocity.y = dy / dt
+				this.speed = this.velocity.x * this.swipeAxis.x + this.velocity.y * this.swipeAxis.y
+
+				// Update offset
+				this.offset += dx * this.swipeAxis.x + dy * this.swipeAxis.y
+			}
 		},
 
 		/**
-		 * 
+		 * Terminates sweep, resets state, requests
+		 * snap animation if necessary
 		 */
-		onTouchStart({changedTouches: [touch]}) {
+		reset(pos) {
 
-			// Stop any tick instance
-			if (this.snapInstance)
-			{
-				cancelAnimationFrame(this.snapInstance)
-				this.snapInstance = null
-			}
-			
-			if (this.lockX || !this.touchStartLoc)
-			{
-				const [x, y] = getTouchLocation(touch)
-				const id = touch.identifier
-
-				// Reset lock
-				this.lockX = true
-
-				// Reset touch
-				this.touchStartLoc =
-				this.touchCurrLoc = {x, y, id}
-
-				this.touchVelocity = {x: 0, y: 0}
-			}
-		},
-
-		/**
-		 * 
-		 */
-		onTouchMove({changedTouches: [...touches]}) {
-			
-			const touch = this.getTouch(touches)
-
-			this.touchPrevLoc = this.touchCurrLoc
-			this.touchCurrLoc = touch
-
-			const touchDelta = {
-				x: this.touchCurrLoc.x - this.touchPrevLoc.x,
-				y: this.touchCurrLoc.y - this.touchPrevLoc.y
-			}
-
-			// Update velocity
-			this.touchVelocity.x = touchDelta.x
-			this.touchVelocity.y = touchDelta.y
-
-			// Update lock
-			if (this.lockX && Math.abs(dot(getNormal(this.touchVelocity), {x: 1, y: 0})) > 0.9)
-			{
-				this.lockX = false
-				this.toggleBodyScroll(true)
-			}
-
-			// Update offset
-			if (!this.lockX) this.offset += touchDelta.x
-		},
-		
-		/**
-		 * 
-		 */
-		onTouchEnd({changedTouches: [...touches]}) {
-
-			// Reset start location and lock
-			if (!this.lockX)
-			{
-				this.lockX = true
-				this.toggleBodyScroll(false)
-			}
-
-			this.touchStartLoc = null
-
-			// Compute threshold
-			const threshold = this.targetOffset
-
-			// Add half current card width
-			const next = threshold - this.contentWidth[this.index] / 3
-			const prev = threshold + this.contentWidth[this.index] / 3
-			
 			// Compute final position
-			let xf = this.offset.x
-			if (this.touchVelocity.x != 0)
-			{
-				const k = 0.5
-				const j = 0.1
+			let xf = this.offset
 
+			if (this.speed > 0 || this.speed < 0)
+			{
+				// No need to simulate, just
+				// a simple differential equation.
+				// The deceleration is proportional
+				// to the inverse of the velocity
+				// magnitude:
+				// a = -v
+				// 
+				// Which means that the variation
+				// of the velocity is:
+				// dv/dt = -v
+				// 
+				// We solve this differntial
+				// equation and compute time
+				// and position at whcih we come
+				// to a complete stop, i.e.
+				// |v| = 0
+				// 
+				// However, |v| = 0 => t = +inf,
+				// Thus we define a final velocity
+				// close to 0, e.g. j = 0.1
+
+				const k = this.sensitivity
+				const j = 0.1
 				const kinv = 1 / k
-				const d = Math.sign(this.touchVelocity.x)
-				const v0 = Math.abs(this.touchVelocity.x)
-				const x0 = this.offset
-				const cv = Math.log(v0)
-				const cx = x0 + d * kinv * v0
-				const tf = kinv * Math.log(v0 / j)
+
+				let v0 = Math.abs(this.speed)
+				let x0 = this.offset
+				let cx = x0 + kinv * this.speed
+				let tf = kinv * Math.log(v0 / j)
 				
-				xf = -kinv * Math.exp(-k * tf) * cv + cx
+				xf = -kinv * v0 * Math.exp(-k * tf) + cx
 			}
 
-			// Update index
-			this.prevIndex = this.index
-			
-			if (xf < next)
-				// Next card
-				this.index = Math.min(this.index + 1, this.numCards - 1)
-			else if (xf > prev)
-				// Previous card
-				this.index = Math.max(this.index - 1, 0)
+			// Update current index
+			this.maybeUpdateIndex(xf)
 
-			// Animate
-			this.lastTickTime = performance.now()
-			this.snapInstance = requestAnimationFrame(this.snap)
+			// Reset state
+			this.currPos
+			this.prevPos
+			this.startPos = null
+			this.lockAxis = false
+
+			// Play snap animation
+			if (true) this.snapAnim = requestAnimationFrame(this.snap)
 		},
 
 		/**
 		 * 
 		 */
-		snap(tickTime) {
-
-			const dt = (tickTime - this.lastTickTime) * 0.001 // Millis to seconds
-			this.lastTickTime = tickTime
+		maybeUpdateIndex(offset) {
 			
-			// When done, terminate animation
-			let done = true
+			const {x: w, y: h} = this.contentSize[this.index]
+			const margin = this.swipeAxis.x * w + this.swipeAxis.y * h
+			const next = this.targetOffset - margin / 2
+			const prev = this.targetOffset + margin / 2
+
+			console.log(offset, next, prev)
+			
+				 if ((next > prev && offset > next) || (next < prev && offset < next)) this.index = Math.min(this.index + 1, this.numCards - 1)
+			else if ((next > prev && offset < prev) || (next < prev && offset > prev)) this.index = Math.max(this.index - 1, 0)
+		},
+
+		/**
+		 * 
+		 */
+		snap() {
+
+			// TODO: Delta time between frames
 
 			// Linear interpolate with current location
 			const epsilon = 1
 			const alpha = 0.3
-			this.offset += alpha * (this.targetOffset - this.offset)
-			done = done && Math.abs(this.offset - this.targetOffset) < epsilon
 
-			// Scroll to top
-			const shouldScroll = this.prevIndex !== this.index && this.scrollOnChange
-			if (shouldScroll)
-			{
-				console.log(this.prevIndex, this.index)
-				window.scrollBy(0, 0.4 * alpha * -window.scrollY)
-				done = done && window.scrollY < epsilon
-			}
+			let dist = this.targetOffset - this.offset
+			let done = dist > -epsilon && dist < epsilon // -eps < d < eps
 
 			if (done)
 			{
 				// Finish animation
 				this.offset = this.targetOffset
-				if (shouldScroll) window.scrollTo(0, 0)
-
-				this.snapInstance = null
+				this.snapAnim = null
 			}
-			else this.snapInstance = requestAnimationFrame(this.snap)
+			else
+			{
+				// Move toward target
+				this.offset += alpha * dist
+				this.snapAnim = requestAnimationFrame(this.snap)
+			}
+		},
+
+		/**
+		 * 
+		 */
+		onTouchStart(ev) {
+			
+			let {changedTouches: [touch, ..._]} = ev
+			let pos = {x: touch.screenX, y: touch.screenY}
+			this.touchId = touch.identifier
+
+			// Set inital position
+			this.set(pos)
+		},
+
+		/**
+		 * 
+		 */
+		onTouchMove(ev) {
+			
+			let {changedTouches: touches} = ev
+			for (let touch of touches)
+			{
+				// Identify touch
+				if (touch.identifier === this.touchId)
+				{
+					// Update state
+					let pos = {x: touch.screenX, y: touch.screenY}
+					this.update(pos)
+				}
+			}
+
+			// Prevent scrolling
+			if (this.lockAxis) ev.preventDefault()
+		},
+		
+		/**
+		 * 
+		 */
+		onTouchEnd(ev) {
+			
+			let {changedTouches: touches} = ev
+			for (let touch of touches)
+			{
+				// Identify touch
+				if (touch.identifier === this.touchId)
+				{
+					// Reset state
+					let pos = {x: touch.screenX, y: touch.screenY}
+					this.reset(pos)
+				}
+			}
+
+			// Reset touch state
+			this.touchId = null
 		}
 	},
 
-	created() {
+	beforeCreate() {
 		
-		this.prevIndex = this.index
-		this.lockX = true
-		this.touchStartLoc = null
-		this.touchVelocity = {x: 0, y: 0}
-		this.snapInstance = null
+		// Internal variables
+		this.currPos = null
+		this.prevPos = null
+		this.lockAxis = true
+		this.startPos = null
+		this.velocity = {x: 0, y: 0}
+		this.speed = 0
+		this.snapAnim = null
 		this.lastTickTime = performance.now()
+
+		// Touch variables
+		this.touchId = null
+	},
+
+	created() {
 
 		// Get num slots
 		this.numCards = this.$slots.default.length
@@ -274,16 +358,16 @@ export default {
 		// Register observer
 		this.sizeObserver = new ResizeObserver((entries) => {
 
-			for (let {target, contentRect} of entries)
+			for (let {target} of entries)
 			{
 				const i = Number.parseInt(target.getAttribute('swoosh-id'))
-				this.contentWidth[i] = target.offsetWidth
+				this.contentSize[i] = {x: target.offsetWidth, y: target.offsetHeight}
 			}
 		})
 		this.cardElements.forEach((card) => this.sizeObserver.observe(card))
 	},
 
-	destroy() {
+	destroyed() {
 
 		// Relase observer
 		this.sizeObserver.disconnect()
@@ -295,24 +379,10 @@ export default {
 	render(h) {
 		
 		// Get children
-		let width = 0
-		let scale = new Array(this.$slots.default.length).fill(1)
-		if (false)
-		{
-			scale = this.contentWidth.map((w) => {
-
-				let x = (this.offset - width) / w
-				width -= w
-
-				console.log()
-
-				return 0.9 + 0.1 * Math.exp(-x * x)
-			})
-		}
-		let cards = this.$slots.default.map((child, i) => h(Card, {style: `transform: scale(${scale[i]});`}, [child]))
+		let cards = this.$slots.default.map((child, i) => h(Card, {}, [child]))
 
 		// Create slider
-		let style = `transform: translate(${this.offset}px, 0px);`
+		let style = `transform: translate(${this.transform.x}px, ${this.transform.y}px);`
 		let slider = h('div', {class: 'swoosh-slider', style}, cards)
 
 		// Return element
